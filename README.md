@@ -1,0 +1,2 @@
+# ScoutingApp
+Personal Scouting app
