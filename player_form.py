@@ -28,6 +28,7 @@ class PlayerForm:
             f["contract_expiry"] = ui.input("Contract expiry (YYYY-MM-DD)", validation=DATE_RULE).classes("w-full")
             f["market_value_eur"] = ui.number("Market value (€)", format="%.0f", min=0).classes("w-full")
             f["transfermarkt_url"] = ui.input("Transfermarkt URL").classes("w-full")
+            f["photo_path"] = ui.input("Profile picture path (e.g. images/player.png)").classes("w-full")
             with ui.row():
                 f["favorite"] = ui.checkbox("Favorite")
                 f["watch_list"] = ui.checkbox("Watch list")
@@ -70,7 +71,7 @@ class PlayerForm:
         for key in FLAGS:
             data[key] = int(bool(data[key]))
         data["market_value_eur"] = to_int(data["market_value_eur"])
-        for key in ["dob", "contract_expiry", "position", "transfermarkt_url", "comments"]:
+        for key in ["dob", "contract_expiry", "position", "transfermarkt_url", "comments", "photo_path"]:
             data[key] = data[key] or None
         try:
             db.save_player(data, self.player_id)

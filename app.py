@@ -11,6 +11,8 @@ from fixture_form import FixtureForm
 from fullcalendar import FullCalendar
 from player_form import PlayerForm
 
+IMAGES = Path(__file__).parent / "images"
+
 # FullCalendar's JavaScript lives in lib/ (copied from NiceGUI's examples/fullcalendar)
 CALENDAR_LIB = Path(__file__).parent / "lib" / "index.global.min.js"
 CALENDAR_OPTIONS = {
@@ -43,6 +45,12 @@ def index():
             only_watch=watch_filter.value,
         )
         for r in rows:
+            photo_path = r.get("photo_path")
+            if photo_path:
+                photo_url = "/" + photo_path.replace("\\", "/").lstrip("/")
+                r["photo"] = photo_url
+            else:
+                r["photo"] = f"/images/{r['id']}.png" if (IMAGES / f"{r['id']}.png").exists() else ""
             r["flags"] = ("★" if r["favorite"] else "") + ("◉" if r["watch_list"] else "")
         table.rows = rows
         table.update()
@@ -158,6 +166,7 @@ def index():
                 ui.button("New player", icon="add", on_click=lambda: form.open(None))
 
             columns = [
+                {"name": "photo", "label": "", "field": "photo", "sortable": False},
                 {"name": "name", "label": "Name", "field": "name", "align": "left", "sortable": True},
                 {"name": "flags", "label": "", "field": "flags"},
                 {"name": "position", "label": "Pos", "field": "position", "sortable": True},
@@ -168,6 +177,14 @@ def index():
                 {"name": "value", "label": "Value (M€)", "field": "value_m", "sortable": True},
             ]
             table = ui.table(columns=columns, rows=[], row_key="id", pagination=25).classes("w-full cursor-pointer")
+            table.add_slot("body-cell-photo", r'''
+                <q-td :props="props">
+                    <q-avatar size="40px" color="grey-3">
+                        <q-img v-if="props.value" :src="props.value" fit="cover" />
+                        <q-icon v-else name="person" color="grey-6" />
+                    </q-avatar>
+                </q-td>
+            ''')
             # clicking a row opens that player's detail page
             table.on("rowClick", lambda e: ui.navigate.to(f"/player/{e.args[1]['id']}"))
 
