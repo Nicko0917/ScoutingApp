@@ -287,9 +287,10 @@ def player_page(player_id: int, report_fixture: Optional[int] = None):
             
                 ui.space()
 
-                img_file = IMAGES / f"{player_id}.png"
+                photo_path = p.get("photo_path")
+                img_file = (Path(__file__).parent / photo_path) if photo_path else (IMAGES / f"{player_id}.png")
                 if img_file.exists():
-                    url = f"/images/{player_id}.png"
+                    url = "/" + photo_path.replace("\\", "/").lstrip("/") if photo_path else f"/images/{player_id}.png"
 
                     with ui.dialog() as dialog, ui.card().classes("p-0 relative overflow-hidden").style("max-width: none;"):
                         ui.image(url).style("width: min(90vw, calc(85vh * 1460 / 1715)); aspect-ratio: 1460 / 1715;")

@@ -45,7 +45,12 @@ def index():
             only_watch=watch_filter.value,
         )
         for r in rows:
-            r["photo"] = f"/images/{r['id']}.png" if (IMAGES / f"{r['id']}.png").exists() else ""
+            photo_path = r.get("photo_path")
+            if photo_path:
+                photo_url = "/" + photo_path.replace("\\", "/").lstrip("/")
+                r["photo"] = photo_url
+            else:
+                r["photo"] = f"/images/{r['id']}.png" if (IMAGES / f"{r['id']}.png").exists() else ""
             r["flags"] = ("★" if r["favorite"] else "") + ("◉" if r["watch_list"] else "")
         table.rows = rows
         table.update()

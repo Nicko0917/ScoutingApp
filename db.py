@@ -6,7 +6,7 @@ from create_db import connect
 PLAYER_FIELDS = [
     "name", "dob", "position", "nationality_id", "current_club_id",
     "transfermarkt_url", "contract_expiry", "market_value_eur",
-    "homegrown_sweden", "linked_with_aik", "favorite", "watch_list", "comments",
+    "homegrown_sweden", "linked_with_aik", "favorite", "watch_list", "comments", "photo_path",
 ]
 STAT_FIELDS = [
     "player_id", "season", "club_id", "matches_played", "matches_started",
@@ -84,7 +84,7 @@ def list_players(search="", position=None, only_favorites=False, only_watch=Fals
                {AGE_SQL} AS age,
                p.contract_expiry,
                ROUND(p.market_value_eur / 1000000.0, 2) AS value_m,
-               p.favorite, p.watch_list
+               p.favorite, p.watch_list, p.photo_path
         FROM player p
         LEFT JOIN nation n ON n.id = p.nationality_id
         LEFT JOIN club c ON c.id = p.current_club_id
