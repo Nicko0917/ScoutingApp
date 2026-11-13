@@ -118,7 +118,7 @@ if __name__ == "__main__":
     ap.add_argument("db")
     ap.add_argument("--prune", action="store_true",
                     help="delete unused auto-created clubs afterwards")
-    ap.add_argument("--tz", default="UTC", help="store kickoff in this zone")
+    ap.add_argument("--tz", default="Europe/Stockholm", help="store kickoff in this zone")
     args = ap.parse_args()
 
     conn = sqlite3.connect(args.db)

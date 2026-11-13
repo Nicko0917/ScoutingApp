@@ -1,8 +1,11 @@
 """The player detail page: info, season stats and transfers."""
 import sqlite3
 from datetime import date
+from typing import Optional
 
-from nicegui import ui
+from nicegui import ui, app
+
+from pathlib import Path
 
 import db
 from common import DATE_RULE, POSITIONS, make_confirm, match_label, to_float, to_int, when_label
@@ -41,6 +44,8 @@ TRANSFER_COLUMNS = [
     {"name": "type", "label": "", "field": "type"},
 ]
 
+app.add_static_files("/images", Path(__file__).parent / "images")
+IMAGES = Path(__file__).parent / "images"
 
 def fact(label, value):
     with ui.column().classes("gap-0"):
@@ -49,7 +54,7 @@ def fact(label, value):
 
 
 @ui.page("/player/{player_id}")
-def player_page(player_id: int):
+def player_page(player_id: int, report_fixture: Optional[int] = None):
     if db.player_detail(player_id) is None:
         ui.label("Player not found")
         ui.button("Back to list", on_click=lambda: ui.navigate.to("/"))
@@ -270,14 +275,32 @@ def player_page(player_id: int):
             ui.space()
             ui.button("Edit", icon="edit", on_click=lambda: form.open(player_id))
         with ui.card().classes("w-full"):
-            with ui.row().classes("gap-8"):
-                fact("Position", p["position"])
-                fact("Age", p["age"])
-                fact("Born", p["dob"])
-                fact("Nationality", p["nation"])
-                fact("Club", p["club"])
-                fact("Contract", p["contract_expiry"])
-                fact("Value", f"€{p['market_value_eur']:,}" if p["market_value_eur"] else None)
+            with ui.row().classes("w-full items-start no-wrap gap-8"):
+                with ui.column().classes("gap-3"):
+                    fact("Position", p["position"])
+                    fact("Age", p["age"])
+                    fact("Born", p["dob"])
+                    fact("Nationality", p["nation"])
+                    fact("Club", p["club"])
+                    fact("Contract", p["contract_expiry"])
+                    fact("Value", f"€{p['market_value_eur']:,}" if p["market_value_eur"] else None)
+            
+                ui.space()
+
+                img_file = IMAGES / f"{player_id}.png"
+                if img_file.exists():
+                    url = f"/images/{player_id}.png"
+
+                    with ui.dialog() as dialog, ui.card().classes("p-0 relative overflow-hidden").style("max-width: none;"):
+                        ui.image(url).style("width: min(90vw, calc(85vh * 1460 / 1715)); aspect-ratio: 1460 / 1715;")
+                        ui.button(icon="close", on_click=dialog.close).props("flat round dense color=white").classes("absolute top-2 right-2 bg-black/50")
+                    
+                    ui.image(url).classes("w-48 rounded-lg cursor-pointer").on("click", dialog.open)
+                else:
+                    with ui.element("div").classes("w48 h-56 rounded-lg bg-gray-200 flex items-center justify-center"):
+                        ui.icon("person", size="64px").classes("text-gray-400")
+
+
             if p["transfermarkt_url"]:
                 ui.link("Transfermarkt", p["transfermarkt_url"], new_tab=True)
             if p["comments"]:
@@ -336,3 +359,8 @@ def player_page(player_id: int):
     stats_section()
     reports_section()
     transfers_section()
+    # coming from the schedule's "Write report": open the report form with that match chosen
+    if report_fixture is not None:
+        open_report(None)
+        if report_fixture in db.fixture_options():
+            rf["fixture_id"].value = report_fixture

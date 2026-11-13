@@ -1,11 +1,34 @@
 """Scouting app. Run: python app.py  (then it opens in your browser)"""
+from pathlib import Path
+
 from nicegui import ui
 
 import db
 import player_page  # noqa: F401  (importing it registers the /player/<id> page)
-from common import POSITIONS, when_label
+import schedule_data
+from common import POSITIONS, match_label, when_label
 from fixture_form import FixtureForm
+from fullcalendar import FullCalendar
 from player_form import PlayerForm
+
+# FullCalendar's JavaScript lives in lib/ (copied from NiceGUI's examples/fullcalendar)
+CALENDAR_LIB = Path(__file__).parent / "lib" / "index.global.min.js"
+CALENDAR_OPTIONS = {
+    "initialView": "dayGridMonth",
+    "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,listWeek,listMonth"},
+    "views": {
+        "dayGridMonth": {"buttonText": "Month"},
+        "listWeek": {"buttonText": "Week list"},
+        "listMonth": {"buttonText": "Month list"},
+    },
+    "firstDay": 1,                       # weeks start on Monday
+    "weekNumbers": True,
+    "timeZone": "local",                 # show kick-off times exactly as stored
+    "height": "auto",
+    "eventTimeFormat": {"hour": "2-digit", "minute": "2-digit", "hour12": False},
+    "displayEventEnd": False,
+    "noEventsContent": "No fixtures with your players",
+}
 
 
 @ui.page("/")
@@ -33,6 +56,40 @@ def index():
             r["score"] = f"{r['home_score']}–{r['away_score']}" if has_score else ""
         fixture_table.rows = rows
         fixture_table.update()
+
+    def refresh_schedule():
+        if calendar is None:
+            return
+        calendar.events.clear()
+        calendar.events.extend(schedule_data.build_events(scope.value == "followed"))
+        calendar.update()
+
+    def open_fixture_info(e):
+        """A calendar event was clicked: show the match and the players involved."""
+        fixture_id = int(e.args["id"])
+        fixture = db.fixture_detail(fixture_id)
+        if fixture is None:
+            return
+        current["id"] = fixture_id
+        info_title.text = match_label(fixture["home"], fixture["away"], fixture["home_score"], fixture["away_score"])
+        info_meta.text = " · ".join(x for x in [when_label(fixture["kickoff"]), fixture["competition"]] if x)
+        info_players.clear()
+        with info_players:
+            players = db.players_for_fixture(fixture_id)
+            if not players:
+                ui.label("None of your players are at these clubs.").classes("text-gray-500")
+            for p in players:
+                with ui.row().classes("w-full items-center no-wrap"):
+                    ui.label(("★ " if p["favorite"] else "") + p["name"]).classes("grow")
+                    ui.button("Profile", on_click=lambda pid=p["id"]: ui.navigate.to(f"/player/{pid}")).props("flat dense")
+                    if p["has_report"]:
+                        ui.label("✓ report")
+                    else:
+                        ui.button(
+                            "Write report",
+                            on_click=lambda pid=p["id"]: ui.navigate.to(f"/player/{pid}?report_fixture={fixture_id}"),
+                        ).props("dense")
+        info_dialog.open()
 
     def reload_options():
         league_nation.set_options(db.nations())
@@ -67,14 +124,24 @@ def index():
 
     # ---------- layout ----------
 
-    form = PlayerForm(on_saved=refresh, on_deleted=refresh)
-    fixture_form = FixtureForm(on_saved=lambda fixture_id: refresh_fixtures())
+    calendar = None   # becomes the calendar element below, if its library is installed
+    current = {"id": None}
 
-    with ui.row():
-        ui.button('Calendar', on_click=ui.navigate.to('/calendar'))
+    form = PlayerForm(on_saved=lambda: (refresh(), refresh_schedule()),
+                      on_deleted=lambda: (refresh(), refresh_schedule()))
+    fixture_form = FixtureForm(on_saved=lambda fixture_id: (refresh_fixtures(), refresh_schedule()))
+
+    with ui.dialog() as info_dialog, ui.card().classes("w-[32rem]"):
+        info_title = ui.label().classes("text-lg font-bold")
+        info_meta = ui.label().classes("text-gray-500")
+        info_players = ui.column().classes("w-full")
+        with ui.row().classes("w-full justify-between"):
+            ui.button("Edit fixture", on_click=lambda: (info_dialog.close(), fixture_form.open(current["id"]))).props("flat")
+            ui.button("Close", on_click=lambda: info_dialog.close()).props("flat")
 
     with ui.tabs().classes("w-full") as tabs:
         players_tab = ui.tab("Players")
+        schedule_tab = ui.tab("Schedule")
         fixtures_tab = ui.tab("Fixtures")
         setup_tab = ui.tab("Setup")
 
@@ -103,6 +170,25 @@ def index():
             table = ui.table(columns=columns, rows=[], row_key="id", pagination=25).classes("w-full cursor-pointer")
             # clicking a row opens that player's detail page
             table.on("rowClick", lambda e: ui.navigate.to(f"/player/{e.args[1]['id']}"))
+
+        with ui.tab_panel(schedule_tab):
+            if not CALENDAR_LIB.exists():
+                ui.label(
+                    "The calendar library is missing. Copy the 'lib' folder from NiceGUI's "
+                    "examples/fullcalendar into this folder (next to app.py), then restart."
+                ).classes("text-orange-700")
+            else:
+                with ui.row().classes("items-center gap-6"):
+                    scope = ui.toggle(
+                        {"followed": "Favorites & watch list", "all": "All players"},
+                        value="followed", on_change=refresh_schedule,
+                    )
+                    ui.label("● report written").style("color: #16a34a")
+                    ui.label("● favorite").style("color: #f59e0b")
+                    ui.label("● watch list").style("color: #3b82f6")
+                    ui.label("● other").style("color: #6b7280")
+                options = {**CALENDAR_OPTIONS, "events": schedule_data.build_events(True)}
+                calendar = FullCalendar(options, on_click=open_fixture_info)
 
         with ui.tab_panel(fixtures_tab):
             with ui.row().classes("w-full items-center"):

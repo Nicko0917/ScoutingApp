@@ -18,7 +18,7 @@ TRANSFER_FIELDS = [
 ]
 
 FIXTURE_FIELDS = [
-    "home_club_id", "away_club_id", "kickoff", "competition",
+    "ics_uid", "home_club_id", "away_club_id", "kickoff", "competition",
     "home_score", "away_score", "sofascore_url",
 ]
 REPORT_FIELDS = [
@@ -208,21 +208,36 @@ def add_league(name, nation_id=None, tier=None):
     return execute("INSERT INTO league (name, nation_id, tier) VALUES (?, ?, ?)", (name, nation_id, tier))
 
 
-def add_club(name, league_id=None):
-    return execute("INSERT INTO club (name, league_id) VALUES (?, ?)", (name, league_id))
+def add_club(name, league_id=None, tracked=1):
+    return execute("INSERT INTO club (name, league_id, tracked) VALUES (?, ?, ?)", (name, league_id, tracked))
+
+
+def find_club(name):
+    """Club id for a name (ignoring case and accents), or None."""
+    wanted = _norm(name.strip())
+    for row in query("SELECT id, name FROM club"):
+        if _norm(row["name"]) == wanted:
+            return row["id"]
+    return None
 
 
 def get_or_create_club(name, tracked=0):
-    """Find a club by name (ignoring case and accents) or create it.
+    """Find a club by name or create it.
 
     Clubs created this way default to tracked=0, so they stay out of the
     player form's club dropdown but can still be used in fixtures.
     """
-    name = name.strip()
-    for row in query("SELECT id, name FROM club"):
-        if _norm(row["name"]) == _norm(name):
-            return row["id"]
-    return execute("INSERT INTO club (name, tracked) VALUES (?, ?)", (name, tracked))
+    return find_club(name) or add_club(name.strip(), None, tracked)
+
+
+def club_calendar_source(club_id):
+    row = _one("SELECT calendar_url FROM club WHERE id = ?", (club_id,))
+    return row["calendar_url"] if row else None
+
+
+def set_calendar_source(club_id, source):
+    """Remember where a club's calendar came from. A club with a calendar is one you track."""
+    execute("UPDATE club SET calendar_url = ?, tracked = 1 WHERE id = ?", (source, club_id))
 
 
 # ---------- fixtures ----------
@@ -290,3 +305,102 @@ def save_report(data, report_id=None):
 
 def delete_report(report_id):
     execute("DELETE FROM match_report WHERE id = ?", (report_id,))
+
+
+# ---------- calendar import and schedule ----------
+
+def find_fixture_by_uid(uid):
+    return _one("SELECT * FROM fixture WHERE ics_uid = ?", (uid,))
+
+
+def find_unlinked_fixture(home_club_id, away_club_id, day):
+    """A hand-entered fixture (no calendar id) for the same clubs within a day of `day` (YYYY-MM-DD)."""
+    return _one(
+        """SELECT * FROM fixture
+           WHERE ics_uid IS NULL AND home_club_id = ? AND away_club_id = ?
+             AND date(kickoff) BETWEEN date(?, '-1 day') AND date(?, '+1 day')
+           ORDER BY kickoff LIMIT 1""",
+        (home_club_id, away_club_id, day, day),
+    )
+
+
+def schedule(now, until=None, only_flagged=False):
+    """Upcoming fixtures where a club has at least one of your players.
+
+    now / until are local timestamps like '2026-11-12T18:00'. Each row gets a
+    'players' text listing the players involved.
+    """
+    flagged = " AND (favorite = 1 OR watch_list = 1)" if only_flagged else ""
+    by_club = {}
+    for p in query(
+        f"""SELECT name, current_club_id FROM player
+            WHERE current_club_id IS NOT NULL{flagged} ORDER BY name COLLATE NOCASE"""
+    ):
+        by_club.setdefault(p["current_club_id"], []).append(p["name"])
+
+    sql = """SELECT f.id, f.kickoff, f.competition, f.home_club_id, f.away_club_id,
+                    hc.name AS home, ac.name AS away
+             FROM fixture f
+             LEFT JOIN club hc ON hc.id = f.home_club_id
+             LEFT JOIN club ac ON ac.id = f.away_club_id
+             WHERE f.kickoff >= ?"""
+    args = [now]
+    if until:
+        sql += " AND f.kickoff < ?"
+        args.append(until)
+    rows = []
+    for f in query(sql + " ORDER BY f.kickoff", args):
+        names = by_club.get(f["home_club_id"], []) + by_club.get(f["away_club_id"], [])
+        if names:
+            f["players"] = ", ".join(names)
+            rows.append(f)
+    return rows
+
+
+# ---------- schedule (fixtures involving players' current clubs) ----------
+
+def fixtures_with_players(followed_only=True):
+    """One row per (fixture, player) where the player's current club is home or away.
+
+    followed_only=True keeps only favorites and watch-list players.
+    """
+    where = "AND (p.favorite = 1 OR p.watch_list = 1)" if followed_only else ""
+    return query(
+        f"""SELECT f.id AS fixture_id, f.kickoff, f.competition, f.home_score, f.away_score,
+                   hc.name AS home, ac.name AS away,
+                   p.id AS player_id, p.name AS player_name, p.favorite, p.watch_list,
+                   EXISTS (SELECT 1 FROM match_report r
+                           WHERE r.fixture_id = f.id AND r.player_id = p.id) AS has_report
+            FROM fixture f
+            JOIN player p ON p.current_club_id IN (f.home_club_id, f.away_club_id)
+            LEFT JOIN club hc ON hc.id = f.home_club_id
+            LEFT JOIN club ac ON ac.id = f.away_club_id
+            WHERE f.kickoff IS NOT NULL {where}
+            ORDER BY f.kickoff, f.id, p.name COLLATE NOCASE"""
+    )
+
+
+def fixture_detail(fixture_id):
+    return _one(
+        """SELECT f.id, f.kickoff, f.competition, f.home_score, f.away_score, f.sofascore_url,
+                  hc.name AS home, ac.name AS away
+           FROM fixture f
+           LEFT JOIN club hc ON hc.id = f.home_club_id
+           LEFT JOIN club ac ON ac.id = f.away_club_id
+           WHERE f.id = ?""",
+        (fixture_id,),
+    )
+
+
+def players_for_fixture(fixture_id):
+    """All players whose current club plays in this fixture, favorites first."""
+    return query(
+        """SELECT p.id, p.name, p.favorite, p.watch_list,
+                  EXISTS (SELECT 1 FROM match_report r
+                          WHERE r.fixture_id = f.id AND r.player_id = p.id) AS has_report
+           FROM fixture f
+           JOIN player p ON p.current_club_id IN (f.home_club_id, f.away_club_id)
+           WHERE f.id = ?
+           ORDER BY p.favorite DESC, p.watch_list DESC, p.name COLLATE NOCASE""",
+        (fixture_id,),
+    )
